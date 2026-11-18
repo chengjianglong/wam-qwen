@@ -87,6 +87,9 @@ PY=../vla-qwen/.env/bin
 $PY/torchrun --nproc_per_node 2 train.py --steps 20 --log_every 5 --save_every 0 --out runs/smoke     # smoke test
 $PY/torchrun --nproc_per_node 2 train.py --bs 1 --accum 8 --steps 2000 --warmup 100 --save_every 500 \
     --out runs/wam_2k 2>&1 | tee runs_2k.log
+# one GPU (same 16 samples/step); expandable segments keep the peak at ~4.3 GB
+CUDA_VISIBLE_DEVICES=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True $PY/python train.py --bs 1 --accum 16 \
+    --steps 2000 --warmup 100 --save_every 250 --out runs/wam_2k 2>&1 | tee runs_2k.log
 $PY/python eval_offline.py --ckpt runs/wam_2k/ckpt_002000.pt --n 500
 ```
 

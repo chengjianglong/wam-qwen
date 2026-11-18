@@ -109,6 +109,7 @@ def main():
     ap.add_argument("--log_every", type=int, default=10)
     ap.add_argument("--save_every", type=int, default=2500)
     ap.add_argument("--no_aug", action="store_true")
+    ap.add_argument("--fused_adam", type=int, default=1, help="fused AdamW: same math, no foreach temporaries")
     ap.add_argument("--resume", default="")
     a = ap.parse_args()
 
@@ -135,7 +136,7 @@ def main():
     if rank == 0:
         print(f"trainable params: {sum(p.numel() for p in params) / 1e6:.1f}M, "
               f"foresight tokens: {model.n_fut}, train frames: {len(ds)}")
-    opt = torch.optim.AdamW(params, lr=a.lr, weight_decay=0.0, betas=(0.9, 0.95))
+    opt = torch.optim.AdamW(params, lr=a.lr, weight_decay=0.0, betas=(0.9, 0.95), fused=a.fused_adam)
     if a.resume and "opt" in ck:
         opt.load_state_dict(ck["opt"])
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1, (s + 1) / a.warmup) *
@@ -143,7 +144,7 @@ def main():
     for _ in range(step0):
         sched.step()
 
-    dmodel = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local], find_unused_parameters=False,
+    dmodel = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local], find_unused_parameters=False, gradient_as_bucket_view=True,
                                                        init_sync=False) if ddp else model
     sampler = DistributedSampler(ds, world, rank, shuffle=True, seed=0) if ddp else None
     dl = DataLoader(ds, batch_size=a.bs, sampler=sampler, shuffle=sampler is None, num_workers=a.workers,
