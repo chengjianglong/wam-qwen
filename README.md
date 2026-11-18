@@ -66,8 +66,30 @@ for frame *t+8*. The world model is only useful if `wm` < `copy` and `cos` > `co
 
 ## Training
 
-Training curves (action L1, and future-latent MSE against the no-change baseline) will go here once the first run
-finishes: `python make_media.py --only curves --log runs_2k.log` writes `media/train_curves.png`.
+<p align="center">
+  <img src="media/train_curves.png" width="900" alt="Training curves: action L1 falls from 0.40 to about 0.15; future-latent MSE falls from 0.98 to about 0.17 and levels off just above the no-change baseline at about 0.15">
+</p>
+
+2000 steps on one RTX A2000 (batch 1 × 16 accumulation = 16 samples per step, the same as the VLA run), AdamW,
+lr 2e-4 with cosine decay, ~10.4 s/step, peak memory 4.31 GB, ~5.8 h in total.
+
+**Held-out results** (`eval_offline.py`, 200 random frames from the 34 held-out episodes, step 2000):
+
+| | WAM | "no change" baseline |
+|---|---|---|
+| action L1 (normalized, 8-step chunk) | 0.153 | |
+| action L1, first step only | 0.151 | |
+| gripper open/close accuracy | 95.1% | |
+| future-latent MSE (frame *t+8*) | 0.163 | **0.132** |
+| future-latent cosine | 0.914 | **0.934** |
+
+**Takeaways from this first run:**
+
+- The model learns to act: the action loss falls to about the level the VLA reached in the same number of steps.
+- The world model learns what the scene looks like (MSE 0.98 → 0.16) but **does not yet beat "nothing changes"**. It
+  has learned the static scene, not yet how it changes over the next 0.8 s.
+- Next experiments: a `--wm_weight 0` run to measure whether foresight helps the actions at all; longer training; and
+  predicting the *change* `z(t+8) − z(t)`, which removes the static part that the copy baseline gets for free.
 
 ## Files
 

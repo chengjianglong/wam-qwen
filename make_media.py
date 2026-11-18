@@ -416,7 +416,7 @@ def curves_png(log, path):
 
     def sm(x, k=9):
         k = min(k, len(x) // 2 * 2 + 1)
-        return np.convolve(np.pad(x, (k // 2, k // 2), mode="edge"), np.ones(k) / k, mode="valid")
+        return np.convolve(np.pad(x, (k // 2, k // 2), mode="reflect"), np.ones(k) / k, mode="valid")
 
     fig, axs = plt.subplots(1, 2, figsize=(11, 3.4), dpi=120, facecolor=SURF)
     ax = axs[0]
@@ -425,9 +425,10 @@ def curves_png(log, path):
     style(ax, "Action L1 (normalized)"); ax.set_ylim(0, None); ax.set_xlabel("optimizer step", fontsize=9, color=INK2)
     ax = axs[1]
     ax.plot(st, lw, color=MAGENTA, lw=1, alpha=0.3); ax.plot(st, sm(lw), color=MAGENTA, lw=2, label="world model")
-    ax.plot(st, sm(lc), color=MUTED, lw=1.6, ls="--", label='"no change" baseline')
-    for y in (sm(lw)[-1], sm(lc)[-1]):
-        ax.annotate(f"{y:.3f}", (st[-1], y), xytext=(6, 0), textcoords="offset points", va="center", fontsize=9)
+    ax.plot(st, sm(lc, 25), color=MUTED, lw=1.6, ls="--", label='"no change" baseline (1 sample per log step)')
+    tail = st > st[-1] * 0.75  # annotate means over the last quarter: the baseline is single-sample noisy
+    for y, dy in ((lw[tail].mean(), 6), (lc[tail].mean(), -6)):
+        ax.annotate(f"{y:.3f}", (st[-1], y), xytext=(6, dy), textcoords="offset points", va="center", fontsize=9)
     style(ax, f"Future-latent MSE (frame t+{FUT})"); ax.set_ylim(0, None)
     ax.set_xlabel("optimizer step", fontsize=9, color=INK2); ax.legend(frameon=False, fontsize=8.5)
     fig.tight_layout(); fig.savefig(path, facecolor=SURF); plt.close(fig)
