@@ -83,12 +83,27 @@ lr 2e-4 with cosine decay, ~10.4 s/step, peak memory 4.31 GB, ~5.8 h in total.
 | future-latent MSE (frame *t+8*) | 0.163 | **0.132** |
 | future-latent cosine | 0.914 | **0.934** |
 
+**LIBERO simulator success** (`eval_libero.py`, the VLA's closed-loop protocol unchanged: 10 tasks per suite,
+10 episodes per task, replan every 8 actions). Both 2k runs saw the same 16 samples per optimizer step:
+
+| Model | Steps | Spatial | Object | Goal | Long | Average |
+|---|---|---|---|---|---|---|
+| [vla-qwen](https://github.com/chengjianglong/vla-qwen) VLA | 2,000 | 55% | **71%** | 45% | 10% | 45.2% |
+| **wam-qwen WAM** | 2,000 | **77%** | 63% | **51%** | **20%** | **52.8%** |
+| vla-qwen VLA (reference) | 20,000 | 98% | 100% | 99% | 87% | 96.0% |
+
+With 100 episodes per suite, one suite's rate is only accurate to about ±5 points, so read the per-suite gaps loosely.
+
 **Takeaways from this first run:**
 
-- The model learns to act: the action loss falls to about the level the VLA reached in the same number of steps.
+- The model learns to act: the action loss falls to about the level the VLA reached in the same number of steps,
+  and in the simulator it succeeds more often than the VLA at the same step count (52.8% vs 45.2%), most clearly
+  on the spatial and long-horizon suites.
 - The world model learns what the scene looks like (MSE 0.98 → 0.16) but **does not yet beat "nothing changes"**. It
   has learned the static scene, not yet how it changes over the next 0.8 s.
-- Next experiments: a `--wm_weight 0` run to measure whether foresight helps the actions at all; longer training; and
+- The two runs differ in more than the world-model loss (prompt, extra query tokens, a held-out split), so the
+  `--wm_weight 0` ablation is what can attribute the gain to foresight.
+- Next experiments: that `--wm_weight 0` run; longer training (the VLA went from 45% to 96% between 2k and 20k); and
   predicting the *change* `z(t+8) − z(t)`, which removes the static part that the copy baseline gets for free.
 
 ## Files
@@ -99,6 +114,8 @@ lr 2e-4 with cosine decay, ~10.4 s/step, peak memory 4.31 GB, ~5.8 h in total.
 | `train.py` | Single- or multi-GPU (DDP) training; dataset with future-frame targets and held-out split |
 | `make_media.py` | Renders the README figures in `media/` (vision latents computed on CPU, cached in `runs/`) |
 | `eval_offline.py` | Action L1, gripper accuracy and world-model MSE/cosine vs. the no-change baseline on held-out episodes |
+| `eval_libero.py` | Closed-loop LIBERO simulator eval; reuses `../vla-qwen/eval_libero.py` and swaps in the WAM policy |
+| `run_eval.sh` | Runs `eval_libero.py` in `../vla-qwen/.env-libero` with headless EGL rendering (`GPU=<id>`) |
 
 ## Usage
 
@@ -113,6 +130,7 @@ $PY/torchrun --nproc_per_node 2 train.py --bs 1 --accum 8 --steps 2000 --warmup 
 CUDA_VISIBLE_DEVICES=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True $PY/python train.py --bs 1 --accum 16 \
     --steps 2000 --warmup 100 --save_every 250 --out runs/wam_2k 2>&1 | tee runs_2k.log
 $PY/python eval_offline.py --ckpt runs/wam_2k/ckpt_002000.pt --n 500
+GPU=0 ./run_eval.sh --ckpt runs/wam_2k/ckpt_002000.pt --trials 10 2>&1 | tee eval_wam_2k.log   # simulator, ~1.75 h
 ```
 
 `--future` sets the world-model horizon, `--wm_weight` the loss weight (0 turns the model back into the plain VLA with
