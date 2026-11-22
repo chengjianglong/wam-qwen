@@ -90,9 +90,22 @@ lr 2e-4 with cosine decay, ~10.4 s/step, peak memory 4.31 GB, ~5.8 h in total.
 |---|---|---|---|---|---|---|
 | [vla-qwen](https://github.com/chengjianglong/vla-qwen) VLA | 2,000 | 55% | **71%** | 45% | 10% | 45.2% |
 | **wam-qwen WAM** | 2,000 | **77%** | 63% | **51%** | **20%** | **52.8%** |
+| WAM without world-model loss (`--wm_weight 0`) | 2,000 | 50% | 60% | 38% | 14% | 40.5% |
+| vla-qwen VLA (continued run) | 10,000 | **82%** | **97%** | 73% | 42% | 73.5% |
+| **WAM (continued run)** | 10,000 | 75% | 89% | **82%** | **49%** | **73.8%** |
 | vla-qwen VLA (reference) | 20,000 | 98% | 100% | 99% | 87% | 96.0% |
 
 With 100 episodes per suite, one suite's rate is only accurate to about ±5 points, so read the per-suite gaps loosely.
+Averages pool 400 episodes and are accurate to about ±2.5 points.
+
+**The ablation isolates foresight.** The `--wm_weight 0` run is the same model, prompt, tokens, data and seed, with only
+the world-model loss switched off. It drops from 52.8% to 40.5% (211 vs 162 of 400 episodes), below even the VLA.
+Training the foresight tokens to predict the future frame is what makes the actions better; the extra tokens on
+their own do not help, and may hurt slightly.
+
+**By 10k steps the gap has closed.** Both 10k checkpoints sit halfway through the same 20k cosine schedule, resumed
+from their 2k runs. They tie on average (73.8% vs 73.5%); the WAM is ahead on goal and long-horizon tasks, the VLA on
+spatial and object. So far foresight speeds up early learning rather than raising the level the policy reaches.
 
 **Takeaways from this first run:**
 
@@ -101,9 +114,8 @@ With 100 episodes per suite, one suite's rate is only accurate to about ±5 poin
   on the spatial and long-horizon suites.
 - The world model learns what the scene looks like (MSE 0.98 → 0.16) but **does not yet beat "nothing changes"**. It
   has learned the static scene, not yet how it changes over the next 0.8 s.
-- The two runs differ in more than the world-model loss (prompt, extra query tokens, a held-out split), so the
-  `--wm_weight 0` ablation is what can attribute the gain to foresight.
-- Next experiments: that `--wm_weight 0` run; longer training (the VLA went from 45% to 96% between 2k and 20k); and
+- The `--wm_weight 0` ablation attributes that gain to the world-model loss (see above).
+- Next experiments: longer training (the VLA went from 45% to 96% between 2k and 20k; a 20k WAM run is in progress); and
   predicting the *change* `z(t+8) − z(t)`, which removes the static part that the copy baseline gets for free.
 
 ## Files
