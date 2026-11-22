@@ -73,15 +73,19 @@ for frame *t+8*. The world model is only useful if `wm` < `copy` and `cos` > `co
 2000 steps on one RTX A2000 (batch 1 × 16 accumulation = 16 samples per step, the same as the VLA run), AdamW,
 lr 2e-4 with cosine decay, ~10.4 s/step, peak memory 4.31 GB, ~5.8 h in total.
 
-**Held-out results** (`eval_offline.py`, 200 random frames from the 34 held-out episodes, step 2000):
+**Held-out results** (`eval_offline.py` on random frames from the 34 held-out episodes; 200 frames at step 2k,
+500 at step 20k):
 
-| | WAM | "no change" baseline |
-|---|---|---|
-| action L1 (normalized, 8-step chunk) | 0.153 | |
-| action L1, first step only | 0.151 | |
-| gripper open/close accuracy | 95.1% | |
-| future-latent MSE (frame *t+8*) | 0.163 | **0.132** |
-| future-latent cosine | 0.914 | **0.934** |
+| | WAM 2k | WAM 20k | "no change" baseline |
+|---|---|---|---|
+| action L1 (normalized, 8-step chunk) | 0.153 | **0.133** | |
+| action L1, first step only | 0.151 | **0.134** | |
+| gripper open/close accuracy | 95.1% | **95.9%** | |
+| future-latent MSE (frame *t+8*) | 0.163 | **0.111** | 0.132 |
+| future-latent cosine | 0.914 | **0.942** | 0.934 |
+
+At 2k steps the world model was worse than guessing "nothing changes"; by 20k it beats that guess on held-out
+episodes (MSE 16% lower), so it has started to predict how the scene moves, not just what it looks like.
 
 **LIBERO simulator success** (`eval_libero.py`, the VLA's closed-loop protocol unchanged: 10 tasks per suite,
 10 episodes per task, replan every 8 actions). Both 2k runs saw the same 16 samples per optimizer step:
@@ -93,7 +97,8 @@ lr 2e-4 with cosine decay, ~10.4 s/step, peak memory 4.31 GB, ~5.8 h in total.
 | WAM without world-model loss (`--wm_weight 0`) | 2,000 | 50% | 60% | 38% | 14% | 40.5% |
 | vla-qwen VLA (continued run) | 10,000 | **82%** | **97%** | 73% | 42% | 73.5% |
 | **WAM (continued run)** | 10,000 | 75% | 89% | **82%** | **49%** | **73.8%** |
-| vla-qwen VLA (reference) | 20,000 | 98% | 100% | 99% | 87% | 96.0% |
+| vla-qwen VLA (continued run) | 20,000 | **98%** | 100% | **99%** | **87%** | **96.0%** |
+| WAM (continued run) | 20,000 | 97% | 100% | 95% | 82% | 93.5% |
 
 With 100 episodes per suite, one suite's rate is only accurate to about ±5 points, so read the per-suite gaps loosely.
 Averages pool 400 episodes and are accurate to about ±2.5 points.
@@ -103,20 +108,21 @@ the world-model loss switched off. It drops from 52.8% to 40.5% (211 vs 162 of 4
 Training the foresight tokens to predict the future frame is what makes the actions better; the extra tokens on
 their own do not help, and may hurt slightly.
 
-**By 10k steps the gap has closed.** Both 10k checkpoints sit halfway through the same 20k cosine schedule, resumed
-from their 2k runs. They tie on average (73.8% vs 73.5%); the WAM is ahead on goal and long-horizon tasks, the VLA on
-spatial and object. So far foresight speeds up early learning rather than raising the level the policy reaches.
+**By 10k steps the gap has closed.** All continued runs follow the same 20k cosine schedule, resumed from their 2k
+runs. At 10k they tie (73.8% vs 73.5%); at 20k the VLA is slightly ahead (96.0% vs 93.5%, 384 vs 374 of 400 episodes),
+a gap of about 1.6 standard errors, so not clearly real. The WAM also trained on 2% fewer episodes (34 held out).
 
-**Takeaways from this first run:**
+**Takeaways:**
 
-- The model learns to act: the action loss falls to about the level the VLA reached in the same number of steps,
-  and in the simulator it succeeds more often than the VLA at the same step count (52.8% vs 45.2%), most clearly
-  on the spatial and long-horizon suites.
-- The world model learns what the scene looks like (MSE 0.98 → 0.16) but **does not yet beat "nothing changes"**. It
-  has learned the static scene, not yet how it changes over the next 0.8 s.
-- The `--wm_weight 0` ablation attributes that gain to the world-model loss (see above).
-- Next experiments: longer training (the VLA went from 45% to 96% between 2k and 20k; a 20k WAM run is in progress); and
-  predicting the *change* `z(t+8) − z(t)`, which removes the static part that the copy baseline gets for free.
+- Foresight helps early: at 2k steps the WAM succeeds more often than the VLA (52.8% vs 45.2%), and the
+  `--wm_weight 0` ablation shows the world-model loss is the cause (40.5% without it).
+- With longer training the advantage disappears: both models reach about the same success at 10k and 20k steps.
+  On LIBERO, foresight speeds up learning rather than raising the level the policy reaches.
+- The world model itself keeps improving: it beats the "nothing changes" guess on held-out episodes at 20k
+  (latent MSE 0.111 vs 0.132), which it did not at 2k.
+- LIBERO is close to saturated at 96%, which leaves little room to show a gain. Next experiments: predicting the
+  *change* `z(t+8) − z(t)`; lower-data settings (e.g. 10% of the demonstrations), where faster learning should matter
+  most; and harder or longer-horizon benchmarks.
 
 ## Files
 
