@@ -12,7 +12,7 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset, DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 
-from wam import Normalizer, QwenWAM, cos, wm_loss
+from wam import Normalizer, QwenWAM, cos, future_latent, wm_loss
 
 DEFAULT_DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vla-qwen", "data", "libero")
 
@@ -23,7 +23,7 @@ class LiberoWMDataset(Dataset):
     split: "train" / "val" / "all". Every `holdout_every`-th episode is held out for "val".
     """
 
-    def __init__(self, root, chunk, future, split="train", holdout_every=50):
+    def __init__(self, root, chunk, future, split="train", holdout_every=50, train_every=1):
         self.meta = json.load(open(os.path.join(root, "meta.json")))
         a = np.load(os.path.join(root, "arrays.npz"))
         self.state, self.actions, self.task_index = a["state"], a["actions"], a["task_index"]
@@ -35,7 +35,8 @@ class LiberoWMDataset(Dataset):
         ep = np.searchsorted(starts, np.arange(N), side="right") - 1
         self.ep_end = (starts + lens - 1)[ep]
         held = (ep % holdout_every == holdout_every - 1) if holdout_every else np.zeros(N, bool)
-        self.idx = {"train": np.flatnonzero(~held), "val": np.flatnonzero(held), "all": np.arange(N)}[split]
+        keep = ~held & (ep % train_every == 0)  # train_every > 1: low-data runs on every N-th episode
+        self.idx = {"train": np.flatnonzero(keep), "val": np.flatnonzero(held), "all": np.arange(N)}[split]
         self.snorm = Normalizer(self.meta["stats"]["state"])
         self.anorm = Normalizer(self.meta["stats"]["actions"], skip_last=True)
         self.tasks = {int(k): v for k, v in self.meta["tasks"].items()}
@@ -98,7 +99,10 @@ def main():
     ap.add_argument("--chunk", type=int, default=8, help="action chunk length H")
     ap.add_argument("--future", type=int, default=8, help="world-model horizon F (frames ahead)")
     ap.add_argument("--wm_weight", type=float, default=0.5)
+    ap.add_argument("--wm_target", default="abs", choices=["abs", "delta"],
+                    help="abs: predict the latent of frame t+F; delta: predict its change from frame t")
     ap.add_argument("--holdout_every", type=int, default=50, help="hold out every N-th episode (0 = none)")
+    ap.add_argument("--train_every", type=int, default=1, help="train on every N-th episode only (10 = 10%% data)")
     ap.add_argument("--bs", type=int, default=1, help="per-GPU micro batch")
     ap.add_argument("--accum", type=int, default=8)
     ap.add_argument("--lr", type=float, default=2e-4)
@@ -123,7 +127,7 @@ def main():
     dev = torch.device("cuda", local)
     rng = np.random.default_rng(rank)
 
-    ds = LiberoWMDataset(a.data, a.chunk, a.future, "train", a.holdout_every)
+    ds = LiberoWMDataset(a.data, a.chunk, a.future, "train", a.holdout_every, a.train_every)
     torch.manual_seed(0)  # identical init on every rank, so DDP needs no initial broadcast
     model = QwenWAM(a.base, chunk=a.chunk, res=ds.meta["res"], lora_r=a.lora_r).to(dev)
     torch.manual_seed(rank)
@@ -168,14 +172,15 @@ def main():
             sync = (micro + 1) % a.accum == 0
             log = rank == 0 and sync and (step + 1) % a.log_every == 0
             # frozen-encoder targets; on log steps also embed the current frame for a "no change" baseline
-            z = model.vision_targets(fut + scene if log else fut)
-            z_fut = z[:len(fut)]
+            need_now = log or a.wm_target == "delta"
+            z = model.vision_targets(fut + scene if need_now else fut)
+            z_fut, z_now = z[:len(fut)], (z[len(fut):] if need_now else None)
 
             ctx = dmodel.no_sync() if (ddp and not sync) else torch.enable_grad()
             with ctx, torch.autocast("cuda", dtype=torch.bfloat16):
                 pred_a, pred_z = dmodel(enc, state)
                 l_act = torch.nn.functional.l1_loss(pred_a, target)
-                l_wm = wm_loss(pred_z, z_fut)
+                l_wm = wm_loss(future_latent(pred_z, z_now, a.wm_target), z_fut)
                 loss = l_act + a.wm_weight * l_wm
                 (loss / a.accum).backward()
             for k, v in (("loss", loss), ("act", l_act), ("wm", l_wm)):
@@ -192,9 +197,9 @@ def main():
                 mem = torch.cuda.max_memory_allocated(dev) / 2**30
                 # compare against the "no change" baseline: predict that frame t+F looks like frame t
                 ln = lambda x: torch.nn.functional.layer_norm(x, x.shape[-1:])
-                c_pred = cos(pred_z.detach().float(), ln(z_fut)).item()
-                c_copy = cos(ln(z[len(fut):]), ln(z_fut)).item()
-                m_copy = wm_loss(ln(z[len(fut):]), z_fut).item()
+                c_pred = cos(future_latent(pred_z.detach().float(), z_now, a.wm_target), ln(z_fut)).item()
+                c_copy = cos(ln(z_now), ln(z_fut)).item()
+                m_copy = wm_loss(ln(z_now), z_fut).item()
                 print(f"step {step} loss {acc['loss']:.4f} act {acc['act']:.4f} wm {acc['wm']:.4f} "
                       f"(copy {m_copy:.4f}) cos {c_pred:.3f} (copy {c_copy:.3f}) "
                       f"gn {gn:.2f} lr {sched.get_last_lr()[0]:.2e} "

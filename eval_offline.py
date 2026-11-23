@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as F
 
 from train import LiberoWMDataset, prepare
-from wam import QwenWAM, cos, wm_loss
+from wam import QwenWAM, cos, future_latent, wm_loss
 
 
 def main():
@@ -43,7 +43,7 @@ def main():
             z = model.vision_targets(fut + scene)
             z_fut, z_now = z[:len(fut)], z[len(fut):]
             pa, pz = model(enc, state)
-            pa, pz = pa.float(), pz.float()
+            pa, pz = pa.float(), future_latent(pz.float(), z_now, t.get("wm_target", "abs"))
             m["act_l1"].append((pa - target).abs().mean().item())
             m["act_l1_first"].append((pa[:, 0] - target[:, 0]).abs().mean().item())
             m["grip_acc"].append(((pa[..., -1] > 0) == (target[..., -1] > 0)).float().mean().item())

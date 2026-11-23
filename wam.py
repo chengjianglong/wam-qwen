@@ -154,6 +154,12 @@ class QwenWAM(nn.Module):
                 if "lora_" in k or k.startswith(("act_queries", "fut_queries", "state_proj", "head", "wm_head"))}
 
 
+def future_latent(pred, z_now, mode="abs"):
+    """Head output -> predicted (layer-normed) latent of frame t+F. mode "delta": the head predicts the change
+    LN(z_t+F) - LN(z_t), so the prediction is that change added to the current frame's latent."""
+    return pred if mode == "abs" else pred + F.layer_norm(z_now, z_now.shape[-1:])
+
+
 def wm_loss(pred, target):
     """MSE against per-token layer-normalized targets (scale-free, like MAE's norm-pix loss)."""
     return F.mse_loss(pred, F.layer_norm(target, target.shape[-1:]))
